@@ -10,10 +10,12 @@ const packetValidators = {
             Token: { type: ["string", "null"] },
             CallbackId: { type: ["number", "null"] },
             Data: {
-                Type: "object",
+                type: "object",
                 properties: {
                     request: { type: "string" }
-                }
+                },
+                required: ["request"],
+                additionalProperties: true
             },
         },
         required: ["Key", "Token", "CallbackId", "Data"],
@@ -22,15 +24,14 @@ const packetValidators = {
     authenticatePacket: {
         type: "object",
         properties: {
+            request: { type: "string" },
             username: {
                 type: "string",
                 minLength: 1,
                 maxLength: 20
             },
             password: {
-                type: "string",
-                minLength: 1,
-                maxLength: 25
+                type: "string"
             },
             email: {
                 type: "string",
@@ -43,6 +44,7 @@ const packetValidators = {
     userAuthPacket: {
         type: "object",
         properties: {
+            request: { type: "string" },
             Id: { type: "string", minLength: 24, maxLength: 24 }
         },
         required: ["Id"],
@@ -51,10 +53,22 @@ const packetValidators = {
     dmPacket: {
         type: "object",
         properties: {
+            request: { type: "string" },
             recipient: { type: "string", minLength: 24, maxLength: 24 },
             message: { type: "string", maxLength: 500 }
         },
         required: ["recipient", "message"],
+        additionalProperties: false
+    },
+    totalDmPacket: {
+        type: "object",
+        properties: {
+            request: { type: "string" },
+            other: { type: "string", minLength: 24, maxLength: 24 },
+            startIndex: { type: "number", minimum: 0 },
+            endIndex: { type: "number", minimum: 0 }
+        },
+        required: [],
         additionalProperties: false
     }
 }
@@ -78,6 +92,10 @@ const Validator = {
     userAuth: (Packet) => {
         const v = ajv.compile(packetValidators.userAuthPacket);
         return v(Packet);
+    },
+    allMessagesDM: (Packet) => {
+        const v = ajv.compile(packetValidators.totalDmPacket);
+        return v(Packet) && Packet.endIndex - Packet.startIndex <= 100;
     }
 };
 

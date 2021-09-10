@@ -1,8 +1,6 @@
 const mysql = require("mysql");
 const shajs = require("sha.js");
 
-const schema = "USE mppe_up_dm; ";
-
 const db = mysql.createConnection({
     host: "localhost",
     user: "root",
@@ -35,14 +33,14 @@ function decrypt(r) {
 };
 
 async function ipOwnedAccounts(ipAddress) {
-    const query = schema + `SELECT * from user WHERE LASTIP = '${ipAddress}'`;
+    const query = `SELECT * from mppe_up_db.user WHERE LASTIP = '${ipAddress}'`;
     const result = await promiseQuery(query);
 
     return result
 };
 
 async function getUserObject(username) {
-    const query = schema + `SELECT * from user WHERE USERNAME = '${username}'`;
+    const query = `SELECT * from mppe_up_db.user WHERE USERNAME = '${username}'`;
     const queryResult = await promiseQuery(query);
 
     return queryResult;
@@ -56,7 +54,7 @@ async function editUserObject(username, editParameters) {
     };
     set = set.join(", ");
 
-    const query = schema + `UPDATE user SET ${set} WHERE USERNAME = '${username}'`;
+    const query = `UPDATE mppe_up_db.user SET ${set} WHERE USERNAME = '${username}'`;
 
     const queryResult = await promiseQuery(query);
 
@@ -75,7 +73,7 @@ function generateEncryptor(size, limited) {
 };
 
 async function canMakeAccount(ipAddress, username, email) {
-    const accountQuery = schema + `SELECT * from user WHERE USERNAME = '${username}' or EMAIL = '${email}'`;
+    const accountQuery = `SELECT * from mppe_up_db.user WHERE USERNAME = '${username}' or EMAIL = '${email}'`;
     const hasAccount = await promiseQuery(accountQuery);
 
     if (!hasAccount.Result) {
@@ -86,7 +84,7 @@ async function canMakeAccount(ipAddress, username, email) {
         return false;
     };
 
-    const ipQuery = schema + `SELECT * from user WHERE LASTIP = '${ipAddress}'`
+    const ipQuery = `SELECT * from mppe_up_db.user WHERE LASTIP = '${ipAddress}'`
     const ipAccounts = await promiseQuery(ipQuery);
 
     if (!ipQuery) {
@@ -105,7 +103,7 @@ async function createAccount({ IpAddress, Username, Password, UserId, Color, Nam
 
     const cipher = generateEncryptor(30);
     const hashedPassword = hash(Password);
-    const accountQuery = schema + `CALL CREATE_USER('${UserId}', '${Username}', '${hashedPassword}', '${Color}', '${Name}', '${IpAddress}', '${Email}', '${cipher}'` + (isAdmin ? ", 2);" : ", 1);");
+    const accountQuery = `CALL mppe_up_db.CREATE_USER('${UserId}', '${Username}', '${hashedPassword}', '${Color}', '${Name}', '${IpAddress}', '${Email}', '${cipher}'` + (isAdmin ? ", 2);" : ", 1);");
 
     const canMake = await canMakeAccount(IpAddress, Username, Email);
 

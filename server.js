@@ -8,16 +8,21 @@ const Validator = require("./validate.js");
 const Friendor = require("./friends.js");
 const Messengor = require("./message.js");
 
+const BannedIps = [];
+
 const WebSocketServer = new WebSocket.Server({
-    port: "8080"
+    port: "8080",
+    verifyClient: (ConnectionData, AcceptStatus) => {
+        let Ip = ConnectionData.req.socket.remoteAddress.split(":");
+        Ip = Ip[Ip.length - 1];
+
+        const BanStatus = BannedIps.indexOf(Ip) === -1;
+
+        AcceptStatus(BanStatus);
+    }
 });
 const WebSocketInterfaceServer = new WebSocket.Server({
     port: "7070",
-    verifyClient: function (data){
-        console.log("HERE", data)
-        console.log(data)
-        return true
-    }
 });
 
 const ConnectedClients = {};
@@ -33,8 +38,6 @@ function ParseMessage(Input) {
 
     return parsed;
 };
-
-function ValidateClient() { };
 
 function AuthenticateId(AuthenticationRoom, ExpectedAuthCode, ExpectedUserId) {
     const MultiplayerPianoClient = new MultiplayerPiano();
@@ -98,7 +101,7 @@ function SendData(Websocket, Data) {
 
 function OnlineUser(userConnection) {
     const { ClientObject } = userConnection;
-    const { UserId, FriendsUsers } = ClientObject;
+    const { UserId, FriendUsers } = ClientObject.UserInfo;
 
     if (UserId !== "000000000000000000000000") {
         console.log(`OnlineUser: User @${UserId} is now online!`);
@@ -117,11 +120,11 @@ function OnlineUser(userConnection) {
 };
 
 function OfflineUser(ClientObject) {
-    const { UserId, FriendsUsers } = ClientObject;
+    const { UserId, FriendUsers } = ClientObject.UserInfo;
     delete OnlineUsers[UserId];
-    
-    console.log(`OnlineUser: User @${UserId} is now offline!`);
-    for (const userid of FriendsUsers) {
+
+    console.log(`OnlineUser: User @${UserId || "Unknown"} is now offline!`);
+    for (const userid of FriendUsers) {
         const FriendOnline = OnlineUsers[userid];
         if (FriendOnline) {
             SendData(FriendOnline, {
@@ -145,7 +148,7 @@ async function IncomingRequest(Websocket, RequestData) {
 
     const RequiredAuth = {
         userAuth: true,
-        message: true
+        messageDM: true
     };
 
     if (request in RequiredAuth) {
@@ -237,7 +240,7 @@ async function IncomingRequest(Websocket, RequestData) {
                     if (Success) {
                         console.log(`Authenticate: Client @${ClientObject.IpAddress} has created account.`);
 
-                        SendData(Websocket, { Events: ["requestUserData"], Payload: {  } });
+                        SendData(Websocket, { Events: ["requestUserData"], Payload: {} });
                         OnlineUser(Websocket);
                         GenerateAuthToken(50);
                     } else {
@@ -283,16 +286,9 @@ async function IncomingRequest(Websocket, RequestData) {
             break;
         case "messageDM":
             const { recipient, message } = Data;
-            const { UserId, Username } = Websocket.ClientObject.UserInfo;
+            const { UserId, Username, FriendUsers } = Websocket.ClientObject.UserInfo;
 
-            const { FRIENDS } = await Friendor.getUserObject(Username);
-
-            if (FRIENDS === undefined) {
-                CallbackPayload = { status: "notSent", message: "Internal error." };
-                break;
-            };
-
-            const IsFriend = FRIENDS.length !== 0 && FRIENDS.indexOf(UserId) !== -1
+            const IsFriend = FriendUsers.length !== 0 && FriendUsers.indexOf(UserId) !== -1;
             const ConversationHash = Authenticator.hash(recipient + UserId);
             const ConvoExists = await Messengor.conversationExist(ConversationHash);
 
@@ -315,21 +311,39 @@ async function IncomingRequest(Websocket, RequestData) {
             };
 
             break;
+        case "allMessagesDM":
+            const { other, startIndex, endIndex } = Data;
+
+            const userid = Websocket.ClientObject.UserInfo.UserId;
+            const convohash = Authenticator.hash(other + userid);
+            const convoexists = await Messengor.conversationExist(convohash);
+
+            if (!convoexists) {
+                CallbackPayload = { message: "This conversation doesn't exist.", messages: [] };
+                break;
+            };
+
+            const Messages = await Messengor.getConversationHistory(convohash, startIndex, endIndex);
+
+            if (!Messages) {
+                CallbackPayload = { message: "Internal error.", messages: [] };
+            } else {
+                CallbackPayload = { message: "OK", messages: Messages };
+            };
+
+            break;
     };
 
     if (CallbackPayload) {
-        SendData(Websocket, {
-            Type: "callback",
-            Payload: CallbackPayload,
-            CallbackId: CallbackId
-        });
+        SendData(Websocket, { Type: "callback", Payload: CallbackPayload, CallbackId: CallbackId });
     };
 
     return true;
 };
 
+
 function WebSocketConnection(Connection, Request) {
-    const RawIp = Request.connection.remoteAddress.split(":");
+    const RawIp = Request.socket.remoteAddress.split(":");
     const ClientObject = {
         IpAddress: RawIp[RawIp.length - 1],
         ConnectTime: new Date(),
@@ -361,17 +375,9 @@ function WebSocketConnection(Connection, Request) {
             const Result = await IncomingRequest(Connection, ParsedMessage);
 
             if (typeof Result === "boolean" && !Result && CallbackId) {
-                SendData(Connection, {
-                    Type: "callback",
-                    CallbackId: CallbackId,
-                    Payload: { Error: true }
-                });
+                SendData(Connection, { Type: "callback", CallbackId: CallbackId, Payload: { Error: true } });
             } else if (typeof Result === "object" && CallbackId) {
-                SendData(Connection, {
-                    Type: "callback",
-                    CallbackId: CallbackId,
-                    Payload: Result
-                })
+                SendData(Connection, { Type: "callback", CallbackId: CallbackId, Payload: Result })
             };
         } else {
             Connection.close();
@@ -397,7 +403,6 @@ function WebSocketConnection(Connection, Request) {
 
 WebSocketServer.on("connection", WebSocketConnection);
 
-
 /* WEBSOCKET SERVER INTERFACE CODE */
 
 WebSocketInterfaceServer.on("connection", function WebSocketInterfaceConnection(Interface) {
@@ -406,28 +411,21 @@ WebSocketInterfaceServer.on("connection", function WebSocketInterfaceConnection(
     WebSocketInterface = Interface;
     Interface.on("message", function WebSocketInterfaceCommand(CommandObject) {
         CommandObject = JSON.parse(CommandObject);
-        const { Command, Target, Message } = CommandObject;
-        for (const IpAddress in ConnectedClients) {
-            if (IpAddress === Target) {
-                switch (Command) {
-                    case "Disconnect":
-                        const TargetConnection = ConnectedClients[IpAddress];
-                        if (Message) {
-                            try {
-                                TargetConnection.send(JSON.stringify({
-                                    ServerSideDisconnection: true,
-                                    Message: "Your connection was terminated by Admin."
-                                }));
-                            } catch (e) { console.log(`InterfaceDisconnect: Failed to send disconnect message to client @${IpAddress}.`) }
-                        };
-                        TargetConnection.close();
-                        console.log(TargetConnection.readyState)
-                        break;
-                }
-            };
-        };
+        const { Target } = CommandObject;
+        const TargetConnection = ConnectedClients[Target];
+        try {
+            TargetConnection.send(JSON.stringify({
+                ServerSideDisconnection: "localhost:7070",
+                Message: "Your connection was terminated by Admin."
+            }));
+        } catch (e) { console.log(`InterfaceDisconnect: Failed to send disconnect message to client @${Target}.`) }
+        TargetConnection.close();
+        console.log(`InterfaceDisconnect: Admin has disconnected client: ${Target}.`);
+
     });
     Interface.on("close", function WebSocketDisconnectInterface() {
         WebSocketInterface = null;
     });
 });
+
+/* WEBSOCKET SERVER INTERFACE CODE */

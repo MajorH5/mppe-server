@@ -29,6 +29,13 @@ async function saveMessage (convoId, sender, sendDate, message){
     return Result;
 };
 
+async function getConversationHistory (convoId, startIndex, endIndex){
+    const query = `SELECT * FROM mppe_dm_db.${convoId} WHERE MESSAGEID BETWEEN ${startIndex} AND ${endIndex}`;
+    const { Result } = await promiseQuery(query);
+
+    return Result
+};
+
 db.connect(async (error) => {
     if (error) {
         throw error;
@@ -38,5 +45,6 @@ db.connect(async (error) => {
 module.exports = Object.freeze({
     createConversation,
     conversationExist,
-    saveMessage
+    saveMessage,
+    getConversationHistory
 });
