@@ -1,17 +1,27 @@
 const WebSocket = require("ws");
 const Base64 = require("base-64");
+const MultiplayerPiano = require("mpp-client-xt");
+const fs = require("fs");
+
 const Authenticator = require("./login.js");
 const Validator = require("./validate.js");
-const MultiplayerPiano = require("mpp-client-xt");
+const Friendor = require("./friends.js");
+const Messengor = require("./message.js");
 
 const WebSocketServer = new WebSocket.Server({
     port: "8080"
 });
 const WebSocketInterfaceServer = new WebSocket.Server({
-    port: "7070"
+    port: "7070",
+    verifyClient: function (data){
+        console.log("HERE", data)
+        console.log(data)
+        return true
+    }
 });
 
 const ConnectedClients = {};
+const OnlineUsers = {};
 
 let WebSocketInterface;
 
@@ -23,6 +33,8 @@ function ParseMessage(Input) {
 
     return parsed;
 };
+
+function ValidateClient() { };
 
 function AuthenticateId(AuthenticationRoom, ExpectedAuthCode, ExpectedUserId) {
     const MultiplayerPianoClient = new MultiplayerPiano();
@@ -81,20 +93,54 @@ function SendData(Websocket, Data) {
 
     try {
         Websocket.send(JSON.stringify(SendingPayload));
-    } catch (e) { console.log(`WebsocketSend: Failed to send data to Client @${Websocket.ClientObject.IpAddress}.`); };
+    } catch (e) { console.log(`WebsocketSend: Failed to send data to client @${Websocket.ClientObject.IpAddress}.`); };
+};
+
+function OnlineUser(userConnection) {
+    const { ClientObject } = userConnection;
+    const { UserId, FriendsUsers } = ClientObject;
+
+    if (UserId !== "000000000000000000000000") {
+        console.log(`OnlineUser: User @${UserId} is now online!`);
+        OnlineUsers[UserId] = userConnection;
+        for (const userid of FriendUsers) {
+            const FriendOnline = OnlineUsers[userid];
+            if (FriendOnline) {
+                SendData(FriendOnline, {
+                    Events: ["playerOnline"],
+                    Payload: { UserId }
+                });
+            };
+        };
+    };
+
+};
+
+function OfflineUser(ClientObject) {
+    const { UserId, FriendsUsers } = ClientObject;
+    delete OnlineUsers[UserId];
+    
+    console.log(`OnlineUser: User @${UserId} is now offline!`);
+    for (const userid of FriendsUsers) {
+        const FriendOnline = OnlineUsers[userid];
+        if (FriendOnline) {
+            SendData(FriendOnline, {
+                Events: ["playerOffline"],
+                Payload: { UserId }
+            });
+        };
+    };
 };
 
 async function IncomingRequest(Websocket, RequestData) {
     const { ClientObject } = Websocket;
     const AnalyzePacket = Validator.VALIDATE_PACKET(RequestData);
-    const HasInfo = Object.values(ClientObject.UserInfo).every(Value => Value !== null);
 
-    if (typeof AnalyzePacket === "string") {
-        return { Error: true, Message: AnalyzePacket };
+    if (!AnalyzePacket) {
+        return { Error: true, Message: "Invalid request data." };
     };
 
     const { Key, Token, CallbackId, Data } = RequestData;
-
     const { request } = Data;
 
     const RequiredAuth = {
@@ -103,9 +149,9 @@ async function IncomingRequest(Websocket, RequestData) {
     };
 
     if (request in RequiredAuth) {
-        if (Token === null || ClientObject.AuthToken === null || Token !== ClientObject.AuthToken){
+        if (Token === null || ClientObject.AuthToken === null || Token !== ClientObject.AuthToken) {
             return false;
-        }
+        };
     };
 
     if (Key !== "mppewebsocket") {
@@ -116,12 +162,12 @@ async function IncomingRequest(Websocket, RequestData) {
 
     const ValidationFunction = Validator[request];
 
-    if (!ValidationFunction){
+    if (!ValidationFunction) {
         return false;
-    }else{
+    } else {
         const AnalysisResult = ValidationFunction(Data);
-        if (typeof AnalysisResult === "string"){
-            return { Error: true, Message: AnalysisResult };
+        if (!AnalysisResult) {
+            return { Error: true, Message: "Invalid data in request." };
         };
     };
 
@@ -153,17 +199,28 @@ async function IncomingRequest(Websocket, RequestData) {
                 const rawPassword = decryptor(Base64.decode(password));
                 const hashed = Authenticator.hash(rawPassword);
 
-                if (rawPassword.length > 25) return { Error: true, Message: "Password is too long." };
-
                 if (existingUser) {
                     if (hashed === existingUser.PASSWORD) {
+
+                        const { data } = await Friendor.getUserObject(username);
+
+                        if (!data) {
+                            return false;
+                        };
+
                         console.log(`Authenticate: Client @${ClientObject.IpAddress} has signed into an existing account.`);
+
                         Websocket.ClientObject.UserInfo = {
+                            ...Websocket.ClientObject.UserInfo,
                             UserId: existingUser.USERID,
                             Color: existingUser.COLOR,
                             Name: existingUser.NAME,
-                            Username: username
+                            Username: username,
+                            FriendUsers: data.FRIENDS,
+                            BlockedUsers: data.BLOCKED
                         };
+
+                        OnlineUser(Websocket);
                         GenerateAuthToken(50);
                     };
                 } else {
@@ -179,9 +236,12 @@ async function IncomingRequest(Websocket, RequestData) {
                     Websocket.ClientObject.Username = username;
                     if (Success) {
                         console.log(`Authenticate: Client @${ClientObject.IpAddress} has created account.`);
+
+                        SendData(Websocket, { Events: ["requestUserData"], Payload: {  } });
+                        OnlineUser(Websocket);
                         GenerateAuthToken(50);
                     } else {
-                        return false;
+                        return false; // Internal error.
                     };
 
                 };
@@ -213,21 +273,46 @@ async function IncomingRequest(Websocket, RequestData) {
                 const { _id, name, color, id } = PlayerObject;
                 Websocket.ClientObject.UserInfo.UserId = id;
                 Websocket.ClientObject.UserInfo.User_Id = _id;
-                Websocket.ClientObject.UserInfo.Color = color;;
-                Websocket.ClientObject.UserInfo.Name = name
+                Websocket.ClientObject.UserInfo.Color = color;
+                Websocket.ClientObject.UserInfo.Name = name;
                 Authenticator.editUserObject(Websocket.ClientObject.UserInfo.Username, { COLOR: color, USERID: id, NAME: name });
+                OnlineUser(Websocket);
             } else {
                 return false;
             };
             break;
-        case "message":
+        case "messageDM":
             const { recipient, message } = Data;
-            const { UserId } = Websocket.ClientObject.UserInfo;
+            const { UserId, Username } = Websocket.ClientObject.UserInfo;
 
+            const { FRIENDS } = await Friendor.getUserObject(Username);
+
+            if (FRIENDS === undefined) {
+                CallbackPayload = { status: "notSent", message: "Internal error." };
+                break;
+            };
+
+            const IsFriend = FRIENDS.length !== 0 && FRIENDS.indexOf(UserId) !== -1
             const ConversationHash = Authenticator.hash(recipient + UserId);
+            const ConvoExists = await Messengor.conversationExist(ConversationHash);
 
-            
-            
+            if (!ConvoExists) {
+                console.log(`MessageDM: Creating conversation hash: ${ConversationHash}`);
+                await Messengor.createConversation(ConversationHash);
+            };
+
+            const Success = await Messengor.saveMessage(ConversationHash, UserId, new Date(), message);
+
+            if (!Success) {
+                CallbackPayload = { status: "notSent", message: "Internal error." };
+                break;
+            } else {
+                if (!IsFriend) {
+                    CallbackPayload = { status: "notFriend", message: "This message was sent however, the user needs to accept your friend request to respond." };
+                } else {
+                    CallbackPayload = { status: "sent" };
+                };
+            };
 
             break;
     };
@@ -255,7 +340,9 @@ function WebSocketConnection(Connection, Request) {
             User_Id: null,
             Color: null,
             Name: null,
-            BlockedUsers: []
+            Room: null,
+            BlockedUsers: [],
+            FriendUsers: []
         },
     };
     console.log(`WebsocketConnect: Client @${ClientObject.IpAddress} has connected!`);
@@ -279,7 +366,7 @@ function WebSocketConnection(Connection, Request) {
                     CallbackId: CallbackId,
                     Payload: { Error: true }
                 });
-            }else if (typeof Result === "object" && CallbackId) {
+            } else if (typeof Result === "object" && CallbackId) {
                 SendData(Connection, {
                     Type: "callback",
                     CallbackId: CallbackId,
@@ -293,7 +380,9 @@ function WebSocketConnection(Connection, Request) {
 
     Connection.on("close", function WebSocketClose() {
         console.log(`WebsocketDisconnect: Client @${ClientObject.IpAddress} has disconnected!`);
+
         delete ConnectedClients[ClientObject.IpAddress];
+        OfflineUser(Connection.ClientObject);
 
         if (WebSocketInterface) {
             WebSocketInterface.send(JSON.stringify({
@@ -301,6 +390,8 @@ function WebSocketConnection(Connection, Request) {
                 Target: ClientObject.IpAddress
             }));
         };
+
+
     });
 };
 

@@ -8,60 +8,52 @@ const db = mysql.createConnection({
     database: "mppe_UP_db"
 });
 
-async function getFriendsList(username) {
+async function getUserObject(username) {
     const query = `SELECT * FROM mppe_f_db.global_friends WHERE USERNAME = '${username}'`;
     let { Result } = await promiseQuery(query);
 
-    if (!Result) return false;
-    if (Result.length === 0) {
-        const createQuery = `INSERT INTO mppe_f_db.global_friends VALUES('${username}', '["FriendedMe!"]', '["BlockedMe!"]')`;
-        let { Result } = await promiseQuery(createQuery);
-        
-        if (!Result) return false;
-        return [];
+    if (!Result) {
+        console.log(`GetFriendsList: Call to get friends list for @${username} failed. @RETURN 1`);
+        return { error: true };
     };
-    
-    const [ dataObject ] = Result;
 
-    return dataObject.FRIENDS;
+    if (Result.length === 0) {
+        const createQuery = `INSERT INTO mppe_f_db.global_friends VALUES('${username}', '[]', '[]')`;
+        let { Result } = await promiseQuery(createQuery);
+
+        if (!Result) {
+            console.log(`GetFriendsList: Call to get friends list for @${username} failed. @RETURN 2`);
+            return { error: true };
+        };
+
+        return { data: { FRIENDS: [], BLOCKED: [] } };
+    };
+
+    const [dataObject] = Result;
+
+    return { data: { FRIENDS: dataObject.FRIENDS, BLOCKED: dataObject.BLOCKED } };
 };
 
-async function setFriendsList(username) {
+async function setUserProperty(username, property, newList) {
+    newList = JSON.stringify(newList);
+    const query = `UPDATE mppe_f_db.global_friends SET ${property} = '${newList}' WHERE USERNAME = ${username}`;
+    const { Result } = await promiseQuery(query);
 
-};
+    if (!Result) {
+        console.log(`SetUserProperty: Call to set user property failed for ${username} failed.`);
+        return { error: true };
+    };
 
-async function canMessage() {
-
-};
-
-async function friendUser() {
-
-};
-
-async function unfriendUser() {
-
-};
-
-async function isBlocked() {
-
-};
-
-async function blockUser() {
-
-};
-
-async function unblockUser() {
-
+    return { };
 };
 
 db.connect(async (error) => {
     if (error) {
         throw error;
     };
-    const data = await getFriendsList("qewqeqw");
-    console.log(data)
 });
 
 module.exports = Object.freeze({
-
+    getUserObject,
+    setUserProperty
 });
