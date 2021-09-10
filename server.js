@@ -1,8 +1,8 @@
 const WebSocket = require("ws");
 const Base64 = require("base-64");
 const Authenticator = require("./login.js");
+const Validator = require("./validate.js");
 const MultiplayerPiano = require("mpp-client-xt");
-const { resolve } = require("path/posix");
 
 const WebSocketServer = new WebSocket.Server({
     port: "8080"
@@ -84,26 +84,28 @@ function SendData(Websocket, Data) {
     } catch (e) { console.log(`WebsocketSend: Failed to send data to Client @${Websocket.ClientObject.IpAddress}.`); };
 };
 
-async function IncomingRequest(Websocket, Client, RequestData) {
+async function IncomingRequest(Websocket, RequestData) {
     const { ClientObject } = Websocket;
-    const ValidPacket = ["Key", "Token", "CallbackId", "Data"].every(Expected => Expected in RequestData);
-    const hasInfo = Object.values(ClientObject.UserInfo).every(Value => Value !== null);
+    const AnalyzePacket = Validator.VALIDATE_PACKET(RequestData);
+    const HasInfo = Object.values(ClientObject.UserInfo).every(Value => Value !== null);
 
-    if (!ValidPacket || !RequestData.Data.request) {
-        return false;
+    if (typeof AnalyzePacket === "string") {
+        return { Error: true, Message: AnalyzePacket };
     };
 
     const { Key, Token, CallbackId, Data } = RequestData;
 
-    if (typeof Data !== "object") {
-        return false;
-    };
-
     const { request } = Data;
 
-    const RequiredAuth = ["userAuth"];
-    if (request in RequiredAuth &&( !Token || Token !== ClientObject.AuthToken)) {
-        return false;
+    const RequiredAuth = {
+        userAuth: true,
+        message: true
+    };
+
+    if (request in RequiredAuth) {
+        if (Token === null || ClientObject.AuthToken === null || Token !== ClientObject.AuthToken){
+            return false;
+        }
     };
 
     if (Key !== "mppewebsocket") {
@@ -111,6 +113,17 @@ async function IncomingRequest(Websocket, Client, RequestData) {
     };
 
     let CallbackPayload;
+
+    const ValidationFunction = Validator[request];
+
+    if (!ValidationFunction){
+        return false;
+    }else{
+        const AnalysisResult = ValidationFunction(Data);
+        if (typeof AnalysisResult === "string"){
+            return { Error: true, Message: AnalysisResult };
+        };
+    };
 
     switch (request) {
         case "getEncryptor":
@@ -121,9 +134,6 @@ async function IncomingRequest(Websocket, Client, RequestData) {
         case "authenticate":
             if (Websocket.encryptor) {
                 const { username, password, email } = Data;
-                if (!username || !password || typeof username !== "string" || typeof password !== "string") {
-                    return false;
-                };
 
                 const { Result } = await Authenticator.getUserObject(username);
                 if (!Result) {
@@ -143,6 +153,8 @@ async function IncomingRequest(Websocket, Client, RequestData) {
                 const rawPassword = decryptor(Base64.decode(password));
                 const hashed = Authenticator.hash(rawPassword);
 
+                if (rawPassword.length > 25) return { Error: true, Message: "Password is too long." };
+
                 if (existingUser) {
                     if (hashed === existingUser.PASSWORD) {
                         console.log(`Authenticate: Client @${ClientObject.IpAddress} has signed into an existing account.`);
@@ -155,9 +167,6 @@ async function IncomingRequest(Websocket, Client, RequestData) {
                         GenerateAuthToken(50);
                     };
                 } else {
-                    if (!email || typeof email !== "string") {
-                        return false;
-                    };
                     const { Success } = await Authenticator.createAccount({
                         IpAddress: ClientObject.IpAddress,
                         UserId: ClientObject.UserId || "000000000000000000000000",
@@ -180,16 +189,12 @@ async function IncomingRequest(Websocket, Client, RequestData) {
             };
             break;
         case "userAuth":
-            if (Websocket.UserAuth){
+            if (Websocket.UserAuth) {
                 return false;
             };
             Websocket.UserAuth = true;
 
             const { Id } = Data;
-
-            if (!Id || typeof Id !== "string"){
-                return false;
-            };
 
             const AuthenticationCode = Authenticator.generateEncryptor(20, true);
             const AuthenticationRoom = "mppe-authroom_" + Authenticator.generateEncryptor(10, true);
@@ -204,17 +209,26 @@ async function IncomingRequest(Websocket, Client, RequestData) {
 
             Websocket.UserAuth = false;
 
-            if (Verified){
+            if (Verified) {
                 const { _id, name, color, id } = PlayerObject;
                 Websocket.ClientObject.UserInfo.UserId = id;
                 Websocket.ClientObject.UserInfo.User_Id = _id;
                 Websocket.ClientObject.UserInfo.Color = color;;
                 Websocket.ClientObject.UserInfo.Name = name
-                const result = Authenticator.editUserObject(Websocket.ClientObject.UserInfo.Username, { COLOR: color, USERID: id, NAME: name });
-            }else {
+                Authenticator.editUserObject(Websocket.ClientObject.UserInfo.Username, { COLOR: color, USERID: id, NAME: name });
+            } else {
                 return false;
             };
+            break;
+        case "message":
+            const { recipient, message } = Data;
+            const { UserId } = Websocket.ClientObject.UserInfo;
+
+            const ConversationHash = Authenticator.hash(recipient + UserId);
+
             
+            
+
             break;
     };
 
@@ -240,7 +254,8 @@ function WebSocketConnection(Connection, Request) {
             UserId: null,
             User_Id: null,
             Color: null,
-            Name: null
+            Name: null,
+            BlockedUsers: []
         },
     };
     console.log(`WebsocketConnect: Client @${ClientObject.IpAddress} has connected!`);
@@ -256,14 +271,20 @@ function WebSocketConnection(Connection, Request) {
         const ParsedMessage = ParseMessage(Data);
         if (ParsedMessage) {
             const { CallbackId } = ParsedMessage;
-            const Result = await IncomingRequest(Connection, ClientObject, ParsedMessage);
+            const Result = await IncomingRequest(Connection, ParsedMessage);
 
-            if (!Result && CallbackId) {
+            if (typeof Result === "boolean" && !Result && CallbackId) {
                 SendData(Connection, {
                     Type: "callback",
                     CallbackId: CallbackId,
                     Payload: { Error: true }
                 });
+            }else if (typeof Result === "object" && CallbackId) {
+                SendData(Connection, {
+                    Type: "callback",
+                    CallbackId: CallbackId,
+                    Payload: Result
+                })
             };
         } else {
             Connection.close();

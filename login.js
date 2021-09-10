@@ -1,6 +1,7 @@
 const mysql = require("mysql");
 const shajs = require("sha.js");
 
+const schema = "USE mppe_up_dm; ";
 
 const db = mysql.createConnection({
     host: "localhost",
@@ -34,14 +35,14 @@ function decrypt(r) {
 };
 
 async function ipOwnedAccounts(ipAddress) {
-    const query = `SELECT * from user WHERE LASTIP = '${ipAddress}'`;
+    const query = schema + `SELECT * from user WHERE LASTIP = '${ipAddress}'`;
     const result = await promiseQuery(query);
 
     return result
 };
 
 async function getUserObject(username) {
-    const query = `SELECT * from user WHERE USERNAME = '${username}'`;
+    const query = schema + `SELECT * from user WHERE USERNAME = '${username}'`;
     const queryResult = await promiseQuery(query);
 
     return queryResult;
@@ -55,7 +56,7 @@ async function editUserObject(username, editParameters) {
     };
     set = set.join(", ");
 
-    const query = `UPDATE user SET ${set} WHERE USERNAME = '${username}'`;
+    const query = schema + `UPDATE user SET ${set} WHERE USERNAME = '${username}'`;
 
     const queryResult = await promiseQuery(query);
 
@@ -74,7 +75,7 @@ function generateEncryptor(size, limited) {
 };
 
 async function canMakeAccount(ipAddress, username, email) {
-    const accountQuery = `SELECT * from user WHERE USERNAME = '${username}' or EMAIL = '${email}'`;
+    const accountQuery = schema + `SELECT * from user WHERE USERNAME = '${username}' or EMAIL = '${email}'`;
     const hasAccount = await promiseQuery(accountQuery);
 
     if (!hasAccount.Result) {
@@ -85,7 +86,7 @@ async function canMakeAccount(ipAddress, username, email) {
         return false;
     };
 
-    const ipQuery = `SELECT * from user WHERE LASTIP = '${ipAddress}'`
+    const ipQuery = schema + `SELECT * from user WHERE LASTIP = '${ipAddress}'`
     const ipAccounts = await promiseQuery(ipQuery);
 
     if (!ipQuery) {
@@ -104,7 +105,7 @@ async function createAccount({ IpAddress, Username, Password, UserId, Color, Nam
 
     const cipher = generateEncryptor(30);
     const hashedPassword = hash(Password);
-    const accountQuery = `CALL CREATE_USER('${UserId}', '${Username}', '${hashedPassword}', '${Color}', '${Name}', '${IpAddress}', '${Email}', '${cipher}'` + (isAdmin ? ", 2);" : ", 1);");
+    const accountQuery = schema + `CALL CREATE_USER('${UserId}', '${Username}', '${hashedPassword}', '${Color}', '${Name}', '${IpAddress}', '${Email}', '${cipher}'` + (isAdmin ? ", 2);" : ", 1);");
 
     const canMake = await canMakeAccount(IpAddress, Username, Email);
 
@@ -129,15 +130,6 @@ db.connect(async (error) => {
     if (error) {
         throw error;
     };
-    // console.log(await createAccount({
-    //     IpAddress: "192.168.1.1",
-    //     UserId: "6455e55246f9b3c868ca1054",
-    //     Username: "3",
-    //     Password: "MPPE@Server-1",
-    //     Email: "3",
-    //     Name: "Anonymous",
-    //     Color: "#FFFFFF"
-    // }, true))
 })
 
 module.exports = Object.freeze({
@@ -148,5 +140,6 @@ module.exports = Object.freeze({
     generateEncryptor,
     decrypt,
     hash,
-    editUserObject
+    editUserObject,
+    promiseQuery
 });
