@@ -34,7 +34,7 @@ const packetValidators = {
                 type: "string"
             },
             email: {
-                type: "string",
+                type: ["string", "null"],
                 pattern: VALID_EMAIL.source
             }
         },

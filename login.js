@@ -99,7 +99,7 @@ async function canMakeAccount(ipAddress, username, email) {
 };
 
 async function createAccount({ IpAddress, Username, Password, UserId, Color, Name, Email, }, isAdmin) {
-    const error = { Failure: true, Reason: "Too many accounts found under this identity." };
+    const error = { Failure: true, Reason: "Multiple accounts found with this username or email." };
 
     const cipher = generateEncryptor(30);
     const hashedPassword = hash(Password);

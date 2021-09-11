@@ -18,7 +18,7 @@ const WebSocketServer = new WebSocket.Server({
 
         const BanStatus = BannedIps.indexOf(Ip) === -1;
 
-        AcceptStatus(BanStatus);
+        AcceptStatus(BanStatus, 403, "This IP has been permanently banned by Admin from accessing this WebSocket connection.");
     }
 });
 const WebSocketInterfaceServer = new WebSocket.Server({
@@ -109,10 +109,7 @@ function OnlineUser(userConnection) {
         for (const userid of FriendUsers) {
             const FriendOnline = OnlineUsers[userid];
             if (FriendOnline) {
-                SendData(FriendOnline, {
-                    Events: ["playerOnline"],
-                    Payload: { UserId }
-                });
+                SendData(FriendOnline, { Events: ["playerOnline"], Payload: { UserId } });
             };
         };
     };
@@ -127,10 +124,7 @@ function OfflineUser(ClientObject) {
     for (const userid of FriendUsers) {
         const FriendOnline = OnlineUsers[userid];
         if (FriendOnline) {
-            SendData(FriendOnline, {
-                Events: ["playerOffline"],
-                Payload: { UserId }
-            });
+            SendData(FriendOnline, { Events: ["playerOffline"], Payload: { UserId } });
         };
     };
 };
@@ -170,7 +164,7 @@ async function IncomingRequest(Websocket, RequestData) {
     } else {
         const AnalysisResult = ValidationFunction(Data);
         if (!AnalysisResult) {
-            return { Error: true, Message: "Invalid data in request." };
+            return { message: "Invalid data in request." };
         };
     };
 
@@ -183,10 +177,10 @@ async function IncomingRequest(Websocket, RequestData) {
         case "authenticate":
             if (Websocket.encryptor) {
                 const { username, password, email } = Data;
-
                 const { Result } = await Authenticator.getUserObject(username);
+
                 if (!Result) {
-                    return false; // Internal error.
+                    return { message: "Internal error." }; // Internal error.
                 };
 
                 const GenerateAuthToken = (size) => {
@@ -204,11 +198,11 @@ async function IncomingRequest(Websocket, RequestData) {
 
                 if (existingUser) {
                     if (hashed === existingUser.PASSWORD) {
-
+                        if (email) return { message: "Account already exists. Did you mean to sign in?" };
                         const { data } = await Friendor.getUserObject(username);
 
                         if (!data) {
-                            return false;
+                            return { message: "Internal error." };
                         };
 
                         console.log(`Authenticate: Client @${ClientObject.IpAddress} has signed into an existing account.`);
@@ -225,9 +219,12 @@ async function IncomingRequest(Websocket, RequestData) {
 
                         OnlineUser(Websocket);
                         GenerateAuthToken(50);
+                    }else{
+                        return { message: "Incorrect username or password." };
                     };
                 } else {
-                    const { Success } = await Authenticator.createAccount({
+                    if (!email) return { message: "Unknown account details." };
+                    const { Success, Reason } = await Authenticator.createAccount({
                         IpAddress: ClientObject.IpAddress,
                         UserId: ClientObject.UserId || "000000000000000000000000",
                         Name: ClientObject.Name || "Anonymous",
@@ -244,11 +241,13 @@ async function IncomingRequest(Websocket, RequestData) {
                         OnlineUser(Websocket);
                         GenerateAuthToken(50);
                     } else {
-                        return false; // Internal error.
+                        return { message: Reason || "Internal error." };
                     };
 
                 };
 
+            }else{
+                return { message: "Password encryptor was never generated." };
             };
             break;
         case "userAuth":
@@ -360,7 +359,7 @@ function WebSocketConnection(Connection, Request) {
         },
     };
     console.log(`WebsocketConnect: Client @${ClientObject.IpAddress} has connected!`);
-
+    WebSocketServer.pin
     Connection.ClientObject = ClientObject;
     ConnectedClients[ClientObject.IpAddress] = Connection;
 
@@ -396,8 +395,9 @@ function WebSocketConnection(Connection, Request) {
                 Target: ClientObject.IpAddress
             }));
         };
-
-
+    });
+    Connection.on("error", function WebSocketError(Error){
+        console.log(`WebSocketError: Client @${ClientObject.IpAddress} experienced a fatal error!`);
     });
 };
 
@@ -419,7 +419,7 @@ WebSocketInterfaceServer.on("connection", function WebSocketInterfaceConnection(
                 Message: "Your connection was terminated by Admin."
             }));
         } catch (e) { console.log(`InterfaceDisconnect: Failed to send disconnect message to client @${Target}.`) }
-        TargetConnection.close();
+        TargetConnection.terminate();
         console.log(`InterfaceDisconnect: Admin has disconnected client: ${Target}.`);
 
     });
